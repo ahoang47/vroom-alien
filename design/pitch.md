@@ -10,6 +10,11 @@ Aliens invaded. Bullets don't work. Crashing them at speed does, and they can't 
 
 Leading option: 1 + 2 (speed-worshipping culture with speed-gated shields).
 
+## Protagonist
+A military recruit. Conventional weapons have failed against the invaders, so the military turns to the one thing that works: racing them into crashes. The protagonist is a fresh recruit drafted into that program, starting at the bottom and rising through the ranks with every alien they wreck. Rank-ups can double as the progression system.
+
+Open questions: why this recruit gets picked to drive (a former street racer, a natural behind the wheel, or the only one reckless enough), who commands them, and whether they serve in a unit of drivers or work alone.
+
 ## Tone
 Play it straight-faced, like *Mars Attacks* meets *Burnout*. The more seriously the world treats the absurd premise, the better it lands.
 
