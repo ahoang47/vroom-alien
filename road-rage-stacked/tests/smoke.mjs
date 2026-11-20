@@ -122,7 +122,8 @@ try {
     awaitPromise: true,
   });
   if (started.exceptionDetails) {
-    throw new Error(started.exceptionDetails.text || 'evaluate failed');
+    const detail = started.exceptionDetails.exception && started.exceptionDetails.exception.description;
+    throw new Error(detail || started.exceptionDetails.text || 'evaluate failed');
   }
   const info = started.result.value;
   console.log(JSON.stringify(info, null, 2));

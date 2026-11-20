@@ -289,8 +289,8 @@ button.ghost:hover { background: rgba(243, 240, 212, 0.08); }
 .bottombar { bottom: 14px; align-items: flex-end; }
 
 .map-wrap {
-  width: 168px;
-  height: 168px;
+  width: 64px;
+  height: 220px;
   border: 3px solid var(--cream);
   box-shadow: 4px 4px 0 rgba(20, 16, 8, 0.45);
   background: rgba(16, 20, 10, 0.4);
@@ -318,7 +318,7 @@ button.ghost:hover { background: rgba(243, 240, 212, 0.08); }
 }
 
 .bars {
-  width: min(360px, 46vw);
+  width: min(480px, 62vw);
   margin-left: auto;
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
 }
@@ -333,10 +333,22 @@ button.ghost:hover { background: rgba(243, 240, 212, 0.08); }
   color: var(--olive);
 }
 
+.bars label.damage-label {
+  margin-top: 12px;
+  font-size: 1.05rem;
+  letter-spacing: 0.18em;
+  color: var(--cream);
+}
+
 .track {
   height: 14px;
   border: 2px solid var(--cream);
   background: rgba(12, 14, 8, 0.45);
+}
+
+#damage-track {
+  height: 36px;
+  border-width: 3px;
 }
 
 .track > div {

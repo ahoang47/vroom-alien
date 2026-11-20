@@ -1,16 +1,14 @@
-import { ROAD_HALF } from './config.js';
-import { VIEW_W, VIEW_H, PX, SQUASH, SPACING, HEIGHT_PX, LEAD } from './display.js';
-import { blit, createBuffer, createSheet, fillRect, packRGBA, quantizeTurn, rasterStack, turnFromYaw } from './stack.js';
-import { buildWorld } from './world.js';
+import { VIEW_W, VIEW_H, PX, SQUASH, SPACING, LIFT, PLAYER_SCREEN } from './display.js';
+import { blit, createBuffer, createSheet, fillRect, packRGBA, quantizeTurn, rasterStack, screenTurn } from './stack.js';
+import { createWorld } from './world.js';
+import { sampleAt } from './track.js';
 import { clamp } from './util.js';
 
-const HAZE = packRGBA(213, 219, 140, 255);
+const GRASS = packRGBA(96, 112, 58, 255);
 const ASPHALT = [58, 64, 50];
 const SHOULDER = [230, 215, 162];
 const LANE = [232, 226, 196];
 const CENTER = [214, 177, 90];
-const SKIRT = [84, 90, 68];
-const SOLE = [64, 70, 50];
 const SPEED = packRGBA(236, 230, 196, 255);
 
 function makePuffSheet() {
@@ -106,7 +104,7 @@ function stampLine(dest, x0, y0, x1, y1, packed) {
 }
 
 export function createView(canvas, track) {
-  const world = buildWorld(track);
+  const world = createWorld(track);
   const { garage } = world;
   canvas.width = VIEW_W;
   canvas.height = VIEW_H;
@@ -125,13 +123,13 @@ export function createView(canvas, track) {
   });
   const debugCache = new Map();
   const list = [];
-  const cam = { x: 0, z: 0, y: 11, shx: 0, shy: 0 };
+  const cam = { x: 0, z: 0, y: 0, shx: 0, shy: 0, ready: false };
   let frameMs = 0;
 
   function project(x, y, z) {
     return {
       x: VIEW_W / 2 + (x - cam.x) * PX + cam.shx,
-      y: VIEW_H / 2 + (z - cam.z) * PX * SQUASH - (y - cam.y) * HEIGHT_PX + cam.shy,
+      y: VIEW_H * PLAYER_SCREEN + (cam.z - z) * PX - (y - cam.y) * LIFT + cam.shy,
     };
   }
 
@@ -141,7 +139,7 @@ export function createView(canvas, track) {
   }
 
   function depthKey(x, z, y, layer) {
-    return (z - cam.z) * PX * SQUASH + y * 0.08 + layer;
+    return (cam.z - z) * PX + y * 4 + layer;
   }
 
   function visible(p, margin) {
@@ -162,25 +160,18 @@ export function createView(canvas, track) {
   }
 
   function drawRoad(a, b) {
+    const ha = a.half;
+    const hb = b.half;
     const deck = [
-      roadPoint(a, -ROAD_HALF, a.y),
-      roadPoint(a, ROAD_HALF, a.y),
-      roadPoint(b, ROAD_HALF, b.y),
-      roadPoint(b, -ROAD_HALF, b.y),
+      roadPoint(a, -ha, a.y),
+      roadPoint(a, ha, a.y),
+      roadPoint(b, hb, b.y),
+      roadPoint(b, -hb, b.y),
     ];
     if (offscreen(deck, 12)) return;
-    const sole = [
-      roadPoint(a, -ROAD_HALF, 0),
-      roadPoint(a, ROAD_HALF, 0),
-      roadPoint(b, ROAD_HALF, 0),
-      roadPoint(b, -ROAD_HALF, 0),
-    ];
-    fillPolygon(frame, sole, SOLE);
-    fillPolygon(frame, [deck[0], deck[3], sole[3], sole[0]], SKIRT);
-    fillPolygon(frame, [deck[1], deck[2], sole[2], sole[1]], SKIRT);
     fillPolygon(frame, deck, ASPHALT);
-    ribbon(a, b, -(ROAD_HALF - 0.5), 0.12, SHOULDER);
-    ribbon(a, b, ROAD_HALF - 0.5, 0.12, SHOULDER);
+    ribbon(a, b, -(ha - 0.55), 0.16, SHOULDER);
+    ribbon(a, b, hb - 0.55, 0.16, SHOULDER);
     ribbon(a, b, 0, 0.14, CENTER);
     if (Math.floor(a.along / 8) % 2 === 0) {
       ribbon(a, b, -5.35, 0.09, LANE);
@@ -235,14 +226,20 @@ export function createView(canvas, track) {
 
   function drawCar(car, time) {
     const py = car.y + (car.wrecked ? 0 : Math.min(0.6, car.bob * 3));
-    const p = projectPx(car.x, py, car.z);
-    if (!visible(p, 48)) return;
-    // Heading, not velocity: a reversing car keeps its nose pointed forward.
-    const turn = quantizeTurn(turnFromYaw(car.yaw));
+    const roll = car.bodyRoll || 0;
+    const rx = Math.cos(car.yaw);
+    const rz = -Math.sin(car.yaw);
+    const px = car.x + rx * roll;
+    const pz = car.z + rz * roll;
+    const p = projectPx(px, py, pz);
+    if (!visible(p, 64)) return;
+    // Heading, not velocity: a reversing car keeps its nose pointed up the road.
+    const turn = quantizeTurn(screenTurn(car.yaw));
     if (car.boosting) {
       const fx = Math.sin(car.yaw);
       const fz = Math.cos(car.yaw);
-      const fp = projectPx(car.x - fx * 2.05, py, car.z - fz * 2.05);
+      const back = (car.bodyLength || 4.4) * 0.48;
+      const fp = projectPx(px - fx * back, py, pz - fz * back);
       const phase = (time * 16) & 1;
       blit(frame, flameSprite(turn.bucket, turn.turn, phase), fp.x, fp.y);
     }
@@ -273,18 +270,13 @@ export function createView(canvas, track) {
   function drawSpeedLines(player, time) {
     const fast = Math.abs(player.speed) > 36;
     if (!fast && !player.boosting) return;
-    const hx = Math.sin(player.yaw);
-    const hy = Math.cos(player.yaw);
-    const px = -hy;
-    const py = hx;
-    const count = player.boosting ? 18 : 8;
+    const count = player.boosting ? 16 : 8;
     for (let i = 0; i < count; i++) {
-      const along = ((time * 150 + i * 53) % 260) - 80;
-      const side = ((i % 9) - 4) * 28;
-      const cx = VIEW_W / 2 + hx * along + px * side;
-      const cy = VIEW_H / 2 + hy * along + py * side;
-      if (Math.hypot(cx - VIEW_W / 2, cy - VIEW_H / 2) < 34) continue;
-      stampLine(frame, cx, cy, cx - hx * 9, cy - hy * 9, SPEED);
+      const side = ((i % 8) - 3.5) * 36;
+      const y = ((time * 220 + i * 47) % (VIEW_H + 30)) - 16;
+      const x = VIEW_W / 2 + side;
+      if (Math.abs(x - VIEW_W / 2) < 28 && y > VIEW_H * 0.55 && y < VIEW_H * 0.82) continue;
+      stampLine(frame, x, y, x, y + 12, SPEED);
     }
   }
 
@@ -304,22 +296,30 @@ export function createView(canvas, track) {
   }
 
   function warm(x, z) {
-    for (const obj of world.statics) {
+    const along = sampleAt(track, z).along;
+    world.ensure(along);
+    const { statics } = world.collect();
+    for (const obj of statics) {
       if (obj.sprite || !obj.build) continue;
-      const dx = obj.x - x;
-      const dz = obj.z - z;
-      if (dx * dx + dz * dz < 46 * 46) obj.sprite = obj.build();
+      obj.sprite = obj.build();
     }
+    void x;
   }
 
   function draw(sim, game, dt, debugSpec) {
     const t0 = performance.now();
     const player = sim.player;
-    const fx = Math.sin(player.yaw);
-    const fz = Math.cos(player.yaw);
-    cam.x = player.x + fx * LEAD;
-    cam.z = player.z + fz * LEAD;
-    cam.y = player.y;
+    const road = sampleAt(track, player.along || player.z);
+    const follow = 1 - Math.exp(-7 * Math.max(dt, 0.016));
+    if (!cam.ready) {
+      cam.x = road.x;
+      cam.z = player.z;
+      cam.ready = true;
+    } else {
+      cam.x += (road.x - cam.x) * follow;
+      cam.z = player.z;
+    }
+    cam.y = 0;
     cam.shx = 0;
     cam.shy = 0;
     if (game.shake > 0) {
@@ -328,11 +328,14 @@ export function createView(canvas, track) {
       game.shake = Math.max(0, game.shake - dt * 1.8);
     }
 
-    frame.u32.fill(HAZE);
+    world.ensure(player.along || player.z);
+    const live = world.collect();
+
+    frame.u32.fill(GRASS);
     list.length = 0;
 
-    for (let i = 0; i < world.roads.length; i++) {
-      const seg = world.roads[i];
+    for (let i = 0; i < live.roads.length; i++) {
+      const seg = live.roads[i];
       const mx = (seg.a.x + seg.b.x) * 0.5;
       const mz = (seg.a.z + seg.b.z) * 0.5;
       const my = (seg.a.y + seg.b.y) * 0.5;
@@ -342,8 +345,8 @@ export function createView(canvas, track) {
       });
     }
 
-    for (let i = 0; i < world.statics.length; i++) {
-      const obj = world.statics[i];
+    for (let i = 0; i < live.statics.length; i++) {
+      const obj = live.statics[i];
       list.push({
         key: depthKey(obj.x, obj.z, obj.y, obj.layer),
         draw: () => {

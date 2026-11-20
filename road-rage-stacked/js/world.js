@@ -1,10 +1,9 @@
-// Static freeway dressing. Stacks that never turn are rasterized once (or the
-// first time they scroll on screen) and then blitted as plain sprites.
-import { ROAD_HALF } from './config.js';
-import { PX, SQUASH, SPACING, HEIGHT_PX } from './display.js';
-import { sampleAt, queryTrack } from './track.js';
-import { mulberry32, clamp } from './util.js';
-import { rasterStack, quantizeTurn, turnFromYaw } from './stack.js';
+// Scenery streams in along the endless freeway. Stacks that never change
+// facing are rasterized once and then blitted as plain sprites.
+import { PX, SQUASH, SPACING } from './display.js';
+import { sampleAt } from './track.js';
+import { clamp } from './util.js';
+import { rasterStack, quantizeTurn, screenTurn } from './stack.js';
 import {
   buildGarage,
   makeBarrier,
@@ -13,6 +12,7 @@ import {
   makeDeckSheet,
 } from './art.js';
 
+const CHUNK = 40;
 const PALETTE = [
   [140, 153, 117, 255],
   [117, 130, 102, 255],
@@ -30,146 +30,134 @@ function cached(map, key, build) {
   return sprite;
 }
 
-export function buildWorld(track) {
+export function createWorld(track) {
   const garage = buildGarage();
-  const pts = track.pts;
-  const n = pts.length;
-  const statics = [];
-  const roads = [];
+  const chunks = new Map();
   const barrierCache = new Map();
+  const lampCache = new Map();
+  const tree = rasterStack(garage.tree, 0, SQUASH, SPACING);
   const columnCache = new Map();
+  const deckSheet = makeDeckSheet(Math.round(8 * PX), Math.round(28 * PX));
 
-  function add(x, y, z, sprite, layer, margin) {
-    statics.push({
-      x, y, z, sprite, layer, margin,
-      build: null,
-    });
+  function add(list, x, y, z, sprite, layer, margin, build) {
+    list.push({ x, y, z, sprite, layer, margin, build: build || null });
   }
 
-  for (let i = 0; i < n; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % n];
-    roads.push({ a, b, layer: 0.12 });
-    const dx = b.x - a.x;
-    const dz = b.z - a.z;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.2) continue;
-    const yaw = Math.atan2(dx, dz);
-    const mx = (a.x + b.x) * 0.5;
-    const my = (a.y + b.y) * 0.5;
-    const mz = (a.z + b.z) * 0.5;
-    const lengthPx = clamp(Math.round(len * PX), 4, 80);
-    const thickPx = Math.max(5, Math.round(0.9 * PX));
+  function buildChunk(index) {
+    const s0 = index * CHUNK;
+    const roads = [];
+    const statics = [];
+    const step = 8;
+    for (let s = s0; s < s0 + CHUNK; s += step) {
+      const a = sampleAt(track, s);
+      const b = sampleAt(track, s + step);
+      roads.push({ a, b, layer: 0.12 });
+      const len = Math.hypot(b.x - a.x, b.z - a.z);
+      const yaw = Math.atan2(a.tx, a.tz);
+      const q = quantizeTurn(screenTurn(yaw));
+      const lengthPx = clamp(Math.round(len * PX), 4, 80);
+      const thickPx = Math.max(5, Math.round(0.85 * PX));
+      const mx = (a.x + b.x) * 0.5;
+      const mz = (a.z + b.z) * 0.5;
+      for (const side of [-1, 1]) {
+        const chevron = side > 0;
+        const key = `${lengthPx}:${thickPx}:${chevron ? 1 : 0}:${q.bucket}`;
+        const sprite = cached(barrierCache, key, () => rasterStack(
+          makeBarrier(lengthPx, thickPx, chevron),
+          q.turn,
+          SQUASH,
+          SPACING,
+        ));
+        const lateral = side * (a.half + 0.35);
+        add(statics, mx + a.rx * lateral, 0, mz + a.rz * lateral, sprite, 0.22, Math.ceil(lengthPx * 0.6) + 8);
+      }
+    }
+
+    const lampAt = sampleAt(track, s0 + CHUNK * 0.5);
+    const lampYaw = Math.atan2(lampAt.tx, lampAt.tz);
     for (const side of [-1, 1]) {
-      const chevron = side > 0;
-      const q = quantizeTurn(turnFromYaw(yaw));
-      const key = `${lengthPx}:${thickPx}:${chevron ? 1 : 0}:${q.bucket}`;
-      const sprite = cached(barrierCache, key, () => rasterStack(
-        makeBarrier(lengthPx, thickPx, chevron),
-        q.turn,
+      const q = quantizeTurn(screenTurn(lampYaw + (side < 0 ? Math.PI : 0)));
+      const sprite = cached(lampCache, q.bucket, () => rasterStack(garage.lamp, q.turn, SQUASH, SPACING));
+      const lateral = side * (lampAt.half + 2.4);
+      add(statics, lampAt.x + lampAt.rx * lateral, 0, lampAt.z + lampAt.rz * lateral, sprite, 0.28, 20);
+    }
+
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 2; k++) {
+        const p = sampleAt(track, s0 + 8 + k * 16 + (side < 0 ? 4 : 0));
+        const lateral = side * (p.half + 4.5 + (index + k) % 3);
+        add(statics, p.x + p.rx * lateral, 0, p.z + p.rz * lateral, tree, 0.2, 16);
+      }
+    }
+
+    if (index % 2 === 0) {
+      const side = index % 4 === 0 ? 1 : -1;
+      const p = sampleAt(track, s0 + 18);
+      const hw = 4 + (index % 3) * 1.4;
+      const hd = 4 + ((index >> 1) % 3) * 1.2;
+      const height = 6 + (index % 5) * 1.6;
+      const colorI = Math.abs(index) % PALETTE.length;
+      const spec = {
+        sliceW: clamp(Math.round(hw * 2 * PX), 14, 48),
+        sliceH: clamp(Math.round(hd * 2 * PX), 14, 48),
+        count: clamp(Math.round(height * 0.7), 6, 12),
+        wall: PALETTE[colorI],
+        roof: PALETTE[(colorI + 2) % PALETTE.length],
+        tower: index % 6 === 0,
+      };
+      const lateral = side * (p.half + hw + 6);
+      add(statics, p.x + p.rx * lateral, 0, p.z + p.rz * lateral, null, 0.16, 48, () => rasterStack(
+        makeBuildingSheet(spec),
+        0,
         SQUASH,
         SPACING,
       ));
-      const lateral = side * (ROAD_HALF + 0.2);
-      add(
-        mx + a.rx * lateral,
-        my,
-        mz + a.rz * lateral,
-        sprite,
-        0.22,
-        Math.ceil(lengthPx * 0.6) + 12,
-      );
     }
-  }
 
-  const lampCache = new Map();
-  for (let i = 0; i < n; i += 8) {
-    const p = pts[i];
-    const yaw = Math.atan2(p.tx, p.tz);
-    for (const side of [-1, 1]) {
-      const q = quantizeTurn(turnFromYaw(yaw) + (side < 0 ? Math.PI : 0));
-      const sprite = cached(lampCache, q.bucket, () => rasterStack(garage.lamp, q.turn, SQUASH, SPACING));
-      const lateral = side * (ROAD_HALF + 1.45);
-      add(p.x + p.rx * lateral, p.y, p.z + p.rz * lateral, sprite, 0.28, 24);
-    }
-  }
-
-  const pierColor = [132, 140, 112, 255];
-  const pierTop = [186, 190, 156, 255];
-  for (let i = 0; i < n; i += 11) {
-    const p = pts[i];
-    const count = clamp(Math.round(p.y * HEIGHT_PX) + 1, 8, 72);
-    const sprite = cached(columnCache, `pier:${count}`, () => rasterStack(
-      makeColumn(7, count, pierColor, pierTop),
-      0,
-      SQUASH,
-      SPACING,
-    ));
-    for (const side of [-1, 1]) {
-      const lateral = side * (ROAD_HALF + 0.15);
-      add(p.x + p.rx * lateral, 0, p.z + p.rz * lateral, sprite, 0.04, 20);
-    }
-  }
-
-  const deckW = Math.round(7 * PX);
-  const deckL = Math.round(30 * PX);
-  const deckSheet = makeDeckSheet(deckW, deckL);
-  for (const t of [0.2, 0.48, 0.74]) {
-    const p = sampleAt(track, track.length * t);
-    const q = quantizeTurn(turnFromYaw(Math.atan2(p.rx, p.rz)));
-    const deck = rasterStack(deckSheet, q.turn, SQUASH, SPACING);
-    add(p.x, p.y + 8, p.z, deck, 0.36, Math.ceil(deckL * 0.6));
-    const rise = clamp(Math.round((p.y + 8) * HEIGHT_PX) + 1, 10, 80);
-    const column = cached(columnCache, `over:${rise}`, () => rasterStack(
-      makeColumn(8, rise, [150, 156, 126, 255], [190, 194, 160, 255]),
-      0,
-      SQUASH,
-      SPACING,
-    ));
-    for (const side of [-1, 1]) {
-      add(p.x + p.rx * side * 16, 0, p.z + p.rz * side * 16, column, 0.06, 24);
-    }
-  }
-
-  const rand = mulberry32(0x51A7);
-  for (let gx = -6; gx <= 6; gx++) {
-    for (let gz = -5; gz <= 5; gz++) {
-      const jitterX = (rand() - 0.5) * 10;
-      const jitterZ = (rand() - 0.5) * 10;
-      const x = gx * 42 + jitterX;
-      const z = gz * 38 + jitterZ;
-      const hw = 5 + rand() * 7;
-      const hd = 5 + rand() * 7;
-      const q = queryTrack(track, x, z);
-      if (q.dist < ROAD_HALF + Math.max(hw, hd) + 6) continue;
-      const height = 8 + rand() * rand() * 62;
-      const colorI = (rand() * PALETTE.length) | 0;
-      let tower = false;
-      if (rand() > 0.55) {
-        rand();
-        rand();
-        tower = true;
+    const period = 700;
+    const mark = 180;
+    for (let s = s0; s < s0 + CHUNK; s += 1) {
+      const u = ((s % period) + period) % period;
+      if (Math.abs(u - mark) > 0.5) continue;
+      const p = sampleAt(track, s);
+      const q = quantizeTurn(screenTurn(Math.atan2(p.rx, p.rz)));
+      const deck = rasterStack(deckSheet, q.turn, SQUASH, SPACING);
+      add(statics, p.x, 3.6, p.z, deck, 0.5, 80);
+      const column = cached(columnCache, 'over', () => rasterStack(
+        makeColumn(8, 10, [150, 156, 126, 255], [190, 194, 160, 255]),
+        0,
+        SQUASH,
+        SPACING,
+      ));
+      for (const side of [-1, 1]) {
+        add(statics, p.x + p.rx * side * (p.half + 1.2), 0, p.z + p.rz * side * (p.half + 1.2), column, 0.08, 20);
       }
-      if (q.dist > 42) continue;
-      const spec = {
-        sliceW: clamp(Math.round(hw * 2 * PX), 14, 96),
-        sliceH: clamp(Math.round(hd * 2 * PX), 14, 96),
-        count: clamp(Math.round(height * 1.15), 14, 52),
-        wall: PALETTE[colorI],
-        roof: PALETTE[(colorI + 2) % PALETTE.length],
-        tower,
-      };
-      statics.push({
-        x,
-        y: 0,
-        z,
-        sprite: null,
-        layer: 0.02,
-        margin: 200,
-        build: () => rasterStack(makeBuildingSheet(spec), 0, SQUASH, SPACING),
-      });
+      break;
+    }
+
+    return { roads, statics };
+  }
+
+  function ensure(along) {
+    const a = Math.floor((along - 40) / CHUNK);
+    const b = Math.floor((along + 80) / CHUNK);
+    for (let i = a; i <= b; i++) {
+      if (!chunks.has(i)) chunks.set(i, buildChunk(i));
+    }
+    for (const key of chunks.keys()) {
+      if (key < a - 1 || key > b + 1) chunks.delete(key);
     }
   }
 
-  return { statics, roads, garage };
+  function collect() {
+    const statics = [];
+    const roads = [];
+    for (const chunk of chunks.values()) {
+      for (let i = 0; i < chunk.roads.length; i++) roads.push(chunk.roads[i]);
+      for (let i = 0; i < chunk.statics.length; i++) statics.push(chunk.statics[i]);
+    }
+    return { statics, roads };
+  }
+
+  return { garage, ensure, collect };
 }

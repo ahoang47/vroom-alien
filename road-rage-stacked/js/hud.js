@@ -7,7 +7,7 @@ function formatTime(t) {
   return `${m}:${String(r).padStart(2, '0')}`;
 }
 
-export function createHud(track) {
+export function createHud(_track) {
   const hud = document.getElementById('hud');
   const timerEl = document.getElementById('timer');
   const takeEl = document.getElementById('takedowns');
@@ -27,32 +27,6 @@ export function createHud(track) {
   const canvas = document.getElementById('minimap');
   const ctx = canvas.getContext('2d');
 
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  for (const p of track.pts) {
-    minX = Math.min(minX, p.x);
-    maxX = Math.max(maxX, p.x);
-    minZ = Math.min(minZ, p.z);
-    maxZ = Math.max(maxZ, p.z);
-  }
-  const pad = 18;
-  const sx = (canvas.width - pad * 2) / (maxX - minX || 1);
-  const sy = (canvas.height - pad * 2) / (maxZ - minZ || 1);
-  const scale = Math.min(sx, sy);
-  const ox = (canvas.width - (maxX - minX) * scale) / 2;
-  const oy = (canvas.height - (maxZ - minZ) * scale) / 2;
-  const project = (x, z) => [ox + (x - minX) * scale, oy + (z - minZ) * scale];
-
-  const road = new Path2D();
-  track.pts.forEach((p, i) => {
-    const [x, y] = project(p.x, p.z);
-    if (i === 0) road.moveTo(x, y);
-    else road.lineTo(x, y);
-  });
-  road.closePath();
-
   let plusTimer = 0;
   let calloutTimer = 0;
 
@@ -69,36 +43,38 @@ export function createHud(track) {
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(16, 20, 10, 0.55)';
+    ctx.fillStyle = 'rgba(16, 20, 10, 0.72)';
     ctx.fillRect(0, 0, w, h);
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = 'rgba(214, 210, 170, 0.35)';
-    ctx.lineWidth = 14;
-    ctx.stroke(road);
-    ctx.strokeStyle = 'rgba(244, 241, 214, 0.95)';
+    const x = Math.round(w * 0.5);
+    ctx.strokeStyle = 'rgba(214, 210, 170, 0.85)';
     ctx.lineWidth = 3;
-    ctx.stroke(road);
-
+    ctx.beginPath();
+    ctx.moveTo(x, 18);
+    ctx.lineTo(x, h - 10);
+    ctx.stroke();
+    const origin = Math.round(h * 0.72);
+    const scale = (h * 0.58) / 36;
+    const yOf = (along) => origin - (along - player.along) * scale;
     for (const car of cars) {
-      if (car === player) continue;
-      const [x, y] = project(car.x, car.z);
-      ctx.fillStyle = car.kind === 'rival' ? '#e23b32' : 'rgba(214, 210, 170, 0.8)';
-      ctx.fillRect(x - (car.kind === 'rival' ? 2.5 : 1.5), y - (car.kind === 'rival' ? 2.5 : 1.5), car.kind === 'rival' ? 5 : 3, car.kind === 'rival' ? 5 : 3);
+      if (car === player || car.wrecked) continue;
+      const y = yOf(car.along);
+      if (y < 16 || y > h - 8) continue;
+      const rival = car.kind === 'rival';
+      ctx.fillStyle = rival ? '#e23b32' : 'rgba(214, 210, 170, 0.85)';
+      const s = rival ? 6 : 3;
+      ctx.fillRect(x - s / 2, y - s / 2, s, s);
     }
-
-    const [px, py] = project(player.x, player.z);
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(Math.atan2(Math.sin(player.yaw), Math.cos(player.yaw)));
     ctx.fillStyle = '#f4f1d6';
     ctx.beginPath();
-    ctx.moveTo(0, -7);
-    ctx.lineTo(5, 6);
-    ctx.lineTo(-5, 6);
+    ctx.moveTo(x, origin - 8);
+    ctx.lineTo(x + 6, origin + 6);
+    ctx.lineTo(x - 6, origin + 6);
     ctx.closePath();
     ctx.fill();
-    ctx.restore();
+    ctx.fillStyle = '#d6d2aa';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${(player.along / 1000).toFixed(1)}`, x, 13);
   }
 
   return {

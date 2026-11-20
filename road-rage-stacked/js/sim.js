@@ -1,6 +1,7 @@
 // Road Rage simulation. Same handling, traffic, and takedown rules as the
 // three.js build. Meshes are gone; the view reads these fields and draws stacks.
-import { ROAD_HALF, PLAYER_HEALTH, PLAYER_START_BOOST } from './config.js';
+import { PLAYER_HEALTH, PLAYER_START_BOOST } from './config.js';
+import { BODY } from './art.js';
 import { queryTrack, sampleAt, alongDelta, wrapAlong } from './track.js';
 import { clamp, wrapAngle } from './util.js';
 
@@ -52,8 +53,9 @@ function addWorldVel(car, dvx, dvz) {
 function spheres(car) {
   const fx = Math.sin(car.yaw);
   const fz = Math.cos(car.yaw);
-  const o = car.sedan ? 1.05 : 1.18;
-  const r = 1.0;
+  const len = car.bodyLength || 4.4;
+  const o = Math.min(2.7, len * 0.33);
+  const r = Math.min(1.35, 0.62 + len * 0.06);
   return [
     { x: car.x + fx * o, z: car.z + fz * o, r },
     { x: car.x - fx * o, z: car.z - fz * o, r },
@@ -100,8 +102,12 @@ function makeCar(kind) {
     preferLat: 3,
     seed: 0,
     slot: 0,
-    mass: kind === 'player' ? 1.4 : kind === 'rival' ? 1 : 0.72,
+    mass: kind === 'player' ? 1.4 : kind === 'rival' ? 1.15 : 0.85,
     phase: 0,
+    steerCmd: 0,
+    yawRate: 0,
+    bodyRoll: 0,
+    bodyLength: kind === 'player' ? BODY.player : 4.6,
   };
 }
 
@@ -115,24 +121,27 @@ export function createSimulation(track) {
     const car = makeCar('rival');
     car.slot = i;
     car.paintId = i;
+    car.bodyLength = BODY.rivals[i];
     car.seed = i * 1.7 + 0.4;
-    car.preferLat = [-2.2, 6.4, -6.2, 4.2, 0.4][i];
-    car.cruise = 34 + i * 1.1;
+    car.preferLat = [-6.2, 6.4, -2.2, 2.8, -4.4][i];
+    car.cruise = 34 + i * 0.6;
+    car.boost = 80;
     return car;
   });
 
   const traffic = [];
-  const perLane = clamp(Math.round(track.length / 88), 8, 12);
+  const perLane = 3;
   let colorI = 0;
   for (const lane of LANES) {
     for (let i = 0; i < perLane; i++) {
       const car = makeCar('traffic');
-      car.paintId = colorI % 6;
+      car.paintId = colorI % BODY.traffic.length;
+      car.bodyLength = BODY.traffic[car.paintId];
       colorI++;
       car.lane = lane.offset;
       car.dir = lane.dir;
-      car.cruise = lane.dir > 0 ? 17 + (i % 5) * 1.7 : 30 + (i % 5) * 1.5;
-      car.phase = (i + 0.5 * LANES.indexOf(lane)) / perLane;
+      car.cruise = lane.dir > 0 ? 18 + (i % 5) * 1.5 : 30 + (i % 5) * 1.4;
+      car.phase = i;
       traffic.push(car);
     }
   }
@@ -228,6 +237,9 @@ export function createSimulation(track) {
     car.wreckT = 0;
     car.tumble = 0;
     car.bob = 0;
+    car.steerCmd = 0;
+    car.yawRate = 0;
+    car.bodyRoll = 0;
   }
 
   function separateFromOthers(car) {
@@ -247,9 +259,12 @@ export function createSimulation(track) {
     }
   }
 
+  let aheadQuiet = 0;
+
   function reset() {
     simTime = 0;
-    const start = track.length * 0.12;
+    aheadQuiet = 0;
+    const start = 80;
     spawn(player, start, 3.1, 1, 30);
     player.health = PLAYER_HEALTH;
     player.boost = PLAYER_START_BOOST;
@@ -258,20 +273,19 @@ export function createSimulation(track) {
     player.stun = 0;
     player.invuln = 0;
     player.lastHit = -10;
-    const rivalOffsets = [18, 38, 60, -26, -48];
+    const rivalOffsets = [8, 16, -7, 24, -13];
     rivals.forEach((car, i) => {
-      spawn(car, start + rivalOffsets[i], car.preferLat, 1, 32 + (i % 3));
+      spawn(car, start + rivalOffsets[i], car.preferLat, 1, 31 + (i % 3));
       car.health = 100;
+      car.boost = 80;
       car.invuln = 0.4;
       car.stun = 0;
       car.lastHit = -10;
       separateFromOthers(car);
     });
-    const spacing = track.length / perLane;
     traffic.forEach((car) => {
-      const along = start + car.phase * track.length;
-      const shifted = car.dir > 0 ? along + spacing * 0.45 : along + spacing * 0.15;
-      spawn(car, shifted, car.lane, car.dir, car.cruise);
+      const gap = 18 + car.phase * 24 + (car.dir < 0 ? 8 : 0);
+      spawn(car, start + gap, car.lane, car.dir, car.cruise);
       car.health = 100;
       separateFromOthers(car);
     });
@@ -303,7 +317,8 @@ export function createSimulation(track) {
       const away = Math.sign(car.preferLat - t.lateral || car.lane - t.lateral || 1);
       lat += away * (t.dir !== car.dir ? 3.1 : 1.5);
     }
-    return clamp(lat, -ROAD_HALF + 2.2, ROAD_HALF - 2.2);
+    const half = q.half || 11.2;
+    return clamp(lat, -half + 2.2, half - 2.2);
   }
 
   function updateRival(car, dt) {
@@ -311,34 +326,93 @@ export function createSimulation(track) {
     if (car.invuln > 0) car.invuln -= dt;
     if (car.stun > 0) car.stun -= dt;
     const q = queryTrack(track, car.x, car.z);
-    const delta = alongDelta(track, q.along, player.along);
-    if (car.invuln <= 0 && (delta > 100 || delta < -120)) {
-      spawn(car, player.along - 32 - car.slot * 8, car.preferLat, 1, car.cruise);
-      car.health = car.maxHealth;
-      car.invuln = 1.1;
-      car.stun = 0;
+    const gap = alongDelta(track, q.along, player.along);
+    // Positive gap: this rival is behind the player. Past ~60 m, drop them
+    // back in ahead of the camera instead of letting boost leave them behind.
+    if (car.invuln <= 0 && (gap > 60 || gap < -90)) {
+      spawnAhead(car, car.slot % 3);
       return;
     }
     let desiredLat = car.preferLat;
-    let target = car.cruise;
-    if (delta > 16) target += 9;
-    if (delta < -28) target -= 8;
-    target = clamp(target, 24, 50);
-    if (Math.abs(delta) < 18 && car.invuln <= 0) {
-      const dive = Math.sin(simTime * 1.15 + car.seed) > 0.15;
+    let target = player.speed;
+    car.boosting = false;
+    if (gap > 4) {
+      target = player.speed + 12 + Math.min(22, gap * 0.85);
+      if (car.boost > 4) {
+        car.boosting = true;
+        car.boost = Math.max(0, car.boost - 12 * dt);
+        target += 6;
+      }
+    } else if (gap < -6) {
+      // Ahead of the player: run a little slower so they can be caught.
+      target = Math.max(22, player.speed - 5);
+      car.boost = Math.min(100, car.boost + 10 * dt);
+    } else {
+      target = player.speed + 2;
+      car.boost = Math.min(100, car.boost + 8 * dt);
+    }
+    target = clamp(target, 22, 92);
+    if (gap > -6 && gap < 16 && car.invuln <= 0) {
+      const dive = Math.sin(simTime * 1.15 + car.seed) > 0.05;
       if (dive) desiredLat = player.lateral;
     }
     desiredLat = dodge(car, q, desiredLat);
-    const look = sampleAt(track, q.along + 16);
-    steerToward(car, look.x + look.rx * desiredLat, look.z + look.rz * desiredLat, dt, car.stun > 0 ? 0.45 : 1.6);
-    car.speed += clamp(target - car.speed, -26, 22) * dt;
-    const grip = car.stun > 0 ? 0.5 : 5.4;
+    const look = sampleAt(track, q.along + 14);
+    steerToward(car, look.x + look.rx * desiredLat, look.z + look.rz * desiredLat, dt, car.stun > 0 ? 0.45 : 1.7);
+    const accel = gap > 8 ? 42 : 28;
+    car.speed += clamp(target - car.speed, -30, accel) * dt;
+    const grip = car.stun > 0 ? 0.5 : 8;
     car.slip *= Math.exp(-grip * dt);
+  }
+
+  function spawnAhead(car, index) {
+    // Just past the top of the overhead view (~19 m of road is on screen).
+    const along = player.along + 23 + index * 5;
+    spawn(car, along, car.preferLat, 1, Math.max(24, player.speed - 5));
+    car.health = car.maxHealth;
+    car.boost = 70;
+    car.invuln = 0.6;
+    car.stun = 0;
+    car.boosting = false;
+    separateFromOthers(car);
+  }
+
+  function keepRivalsClose(dt) {
+    if (!scoring || player.wrecked) return;
+    const live = rivals.filter((c) => !c.wrecked && !c.down);
+    const gaps = live.map((car) => ({ car, gap: player.along - car.along }));
+    const ahead = gaps.filter((g) => g.gap < -4 && g.gap > -70);
+    if (ahead.length === 0) aheadQuiet += dt;
+    else aheadQuiet = 0;
+    const lead = gaps.length ? Math.min(...gaps.map((g) => g.gap)) : 999;
+    const fighting = gaps.filter((g) => g.gap > -30 && g.gap < 30);
+    const tooFar = lead > 60;
+    const lonely = aheadQuiet >= 3;
+    if (!tooFar && !lonely && fighting.length >= 2) return;
+    const pool = gaps
+      .filter((g) => g.gap > 2 || g.gap < -40)
+      .sort((a, b) => b.gap - a.gap);
+    let need = 2 - Math.min(fighting.length, ahead.length);
+    if (tooFar || lonely) need = Math.max(need, 2);
+    if (fighting.length < 2) need = Math.max(need, 2 - fighting.length);
+    let placed = 0;
+    for (const item of pool) {
+      if (placed >= need) break;
+      spawnAhead(item.car, placed);
+      placed++;
+    }
+    if (placed > 0) aheadQuiet = 0;
   }
 
   function updateTraffic(car, dt) {
     if (car.wrecked) return;
     const q = queryTrack(track, car.x, car.z);
+    const gap = q.along - player.along;
+    const lost = car.dir > 0 ? gap < -36 || gap > 95 : gap < -24 || gap > 85;
+    if (lost) {
+      respawnTraffic(car);
+      return;
+    }
     const look = sampleAt(track, q.along + car.dir * 14);
     const aimX = look.x + look.rx * car.lane;
     const aimZ = look.z + look.rz * car.lane;
@@ -357,38 +431,51 @@ export function createSimulation(track) {
     const brake = input.brake ? 1 : 0;
     const reverse = car.speed < -1 ? -1 : 1;
     const sp = Math.abs(car.speed);
-    let authority = 1.8 * Math.min(1, 0.4 + sp / 14) / (1 + sp / 110);
-    if (car.stun > 0) authority *= 0.62;
-    // Positive steer yaws toward the driver's left (A). D is the opposite.
-    applyYaw(car, steer * reverse * authority * dt);
+    // The wheel comes in at a limited rate, so a jab does not snap the nose.
+    const cmdRate = 3.4;
+    car.steerCmd += clamp(steer - car.steerCmd, -cmdRate * dt, cmdRate * dt);
 
     const drifting = drift !== 0 && sp > 8 && !brake;
     car.drifting = drifting;
     car.drift = drifting ? drift : 0;
+    // More lock at low speed, less as the car gets quick. Drifts stay loose.
+    let maxRate = (0.62 + 7 / (sp + 8)) * (drifting ? 1.65 : 1);
+    if (car.stun > 0) maxRate *= 0.7;
+    let target = car.steerCmd * reverse * maxRate;
+    if (drifting) target += drift * reverse * 1.45;
+    const rateAccel = drifting ? 6 : 8;
+    car.yawRate += clamp(target - car.yawRate, -rateAccel * dt, rateAccel * dt);
+    // Positive steer yaws toward the driver's left (A). D is the opposite.
+    applyYaw(car, car.yawRate * dt);
+
     if (drifting) {
-      // Swing the nose into the drift. applyYaw keeps world velocity, so the
-      // rear steps out the other way and slip takes the opposite sign.
-      const swing = 2.5 * Math.min(1, sp / 16);
-      applyYaw(car, drift * reverse * swing * dt);
+      car.slip += -drift * reverse * 14 * dt;
+      car.slip *= Math.exp(-1.15 * dt);
+      car.slip = clamp(car.slip, -28, 28);
       if (!input.boost) car.boost = Math.min(100, car.boost + 24 * dt);
+    } else {
+      const load = clamp(-car.yawRate * Math.min(sp, 36) * 0.09, -3.5, 3.5);
+      const k = 1 - Math.exp(-14 * dt);
+      car.slip += (load - car.slip) * k;
     }
+
+    const rollTarget = car.steerCmd * Math.min(1, sp / 16) * 0.42;
+    car.bodyRoll += (rollTarget - car.bodyRoll) * (1 - Math.exp(-8 * dt));
 
     const boosting = !!(input.boost && !brake && car.boost > 0.5 && (throttle || car.speed > 8));
     car.boosting = boosting;
     let accel = 0;
-    if (throttle) accel += boosting ? 50 : 30;
-    if (brake) accel += car.speed > 1 ? -56 : -22;
+    if (throttle) accel += boosting ? 48 : 28;
+    if (brake) accel += car.speed > 1 ? -52 : -20;
     car.speed += accel * dt;
-    car.speed -= car.speed * (boosting ? 0.16 : 0.42) * dt;
-    const max = boosting ? 70 : 46;
+    car.speed -= car.speed * (boosting ? 0.16 : 0.38) * dt;
+    car.speed -= Math.abs(car.yawRate) * sp * 0.012 * dt;
+    const max = boosting ? 68 : 46;
     if (car.speed > max) car.speed = max;
     if (car.speed < -16) car.speed = -16;
-    const grip = (drifting ? 0.72 : boosting ? 1.35 : 4.8) * (car.stun > 0 ? 0.4 : 1);
-    car.slip *= Math.exp(-grip * dt);
-    car.slip = clamp(car.slip, -36, 36);
     if (boosting) car.boost = Math.max(0, car.boost - 28 * dt);
     if (car.boost <= 0) car.boosting = false;
-    car.steerVisual = steer;
+    car.steerVisual = car.steerCmd;
   }
 
   function coast(car, dt) {
@@ -476,7 +563,7 @@ export function createSimulation(track) {
   function wallHit(car, outward, hooks) {
     if (car.kind === 'player') {
       if (!scoring) return;
-      const dmg = Math.max(0, outward - 8) * 1.7;
+      const dmg = Math.max(0, outward - 8) * 0.62;
       if (dmg <= 0) return;
       car.health -= dmg;
       car.bob = Math.min(0.3, dmg * 0.01);
@@ -510,7 +597,7 @@ export function createSimulation(track) {
       return;
     }
     car.y = q.y;
-    const limit = ROAD_HALF - 1.15;
+    const limit = (q.half || 11.2) - 1.15;
     if (Math.abs(q.lateral) <= limit) return;
     const sign = Math.sign(q.lateral);
     const push = Math.abs(q.lateral) - limit;
@@ -537,7 +624,7 @@ export function createSimulation(track) {
   function resolvePhysics(a, b) {
     const dx0 = b.x - a.x;
     const dz0 = b.z - a.z;
-    if (dx0 * dx0 + dz0 * dz0 > 36) return null;
+    if (dx0 * dx0 + dz0 * dz0 > 80) return null;
     const as = spheres(a);
     const bs = spheres(b);
     let best = null;
@@ -614,7 +701,7 @@ export function createSimulation(track) {
       if (rival.health <= 0) scrap(rival);
       return;
     }
-    player.health -= col.impact * 0.42;
+    player.health -= col.impact * 0.16;
     hooks.hit(col.impact);
     if (rival.health <= 0) takedown(rival, 'smash', hooks);
     if (player.health <= 0) hooks.crash('wreck');
@@ -657,16 +744,23 @@ export function createSimulation(track) {
   }
 
   function respawnRival(car) {
-    spawn(car, player.along - 34 - car.slot * 9, car.preferLat, 1, car.cruise);
-    car.health = car.maxHealth;
-    car.invuln = 1.25;
-    car.stun = 0;
+    const someoneAhead = rivals.some((r) => r !== car && !r.wrecked && !r.down && player.along - r.along < -4);
+    if (!someoneAhead) {
+      spawnAhead(car, car.slot % 3);
+    } else {
+      spawn(car, player.along - 16, car.preferLat, 1, Math.max(28, player.speed * 0.98));
+      car.health = car.maxHealth;
+      car.boost = 80;
+      car.invuln = 1.1;
+      car.stun = 0;
+      car.boosting = true;
+      separateFromOthers(car);
+    }
     car.lastHit = -10;
-    separateFromOthers(car);
   }
 
   function respawnTraffic(car) {
-    const ahead = player.along + 90 + Math.random() * track.length * 0.4;
+    const ahead = player.along + 22 + Math.random() * 48;
     spawn(car, ahead, car.lane, car.dir, car.cruise);
     car.health = car.maxHealth;
     separateFromOthers(car);
@@ -742,6 +836,7 @@ export function createSimulation(track) {
       m.z += m.vz * dt;
       if (m.life <= 0) m.life = 0;
     }
+    keepRivalsClose(dt);
 
     for (const m of shards) {
       if (m.life <= 0) continue;

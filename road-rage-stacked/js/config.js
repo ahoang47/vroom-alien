@@ -1,4 +1,4 @@
-// Tuning knobs for the Road Rage event. One circuit, one target.
+// Tuning knobs for the Road Rage event. One endless freeway, one target.
 
 export const TARGET_TAKEDOWNS = 8;
 export const START_TIME = 60;

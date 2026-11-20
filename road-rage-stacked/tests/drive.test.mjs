@@ -97,6 +97,67 @@ check('Q drifts left and E drifts right', q.drift > 0 && e.drift < 0 && q.drift 
   );
 }
 
+function directionChanges(series) {
+  let changes = 0;
+  let prev = 0;
+  for (let i = 1; i < series.length; i++) {
+    const d = series[i] - series[i - 1];
+    if (Math.abs(d) < 1e-4) continue;
+    const s = Math.sign(d);
+    if (prev && s !== prev) changes++;
+    prev = s;
+  }
+  return changes;
+}
+
+function yawSeries(steer, seconds) {
+  const sim = fresh();
+  sim.player.yawRate = 0;
+  sim.player.steerCmd = 0;
+  const rates = [];
+  const steps = Math.round(seconds / (1 / 60));
+  for (let i = 0; i < steps; i++) {
+    sim.update(1 / 60, { mode: 'play', throttle: true, brake: false, steer, drift: 0, boost: false }, hooks);
+    rates.push(sim.player.yawRate);
+  }
+  return { sim, rates };
+}
+
+{
+  const held = yawSeries(1, 0.9);
+  const peak = Math.max(...held.rates);
+  const released = [];
+  for (let i = 0; i < 54; i++) {
+    held.sim.update(1 / 60, { mode: 'play', throttle: true, brake: false, steer: 0, drift: 0, boost: false }, hooks);
+    released.push(held.sim.player.yawRate);
+  }
+  const overshoot = Math.min(...released);
+  check(
+    'steering ramps in and settles without oscillation or overshoot',
+    directionChanges(held.rates) <= 1 && directionChanges(released) <= 1 && overshoot > -Math.max(0.02, peak * 0.05) && Math.abs(released[released.length - 1]) < 0.05,
+    `hold turns ${directionChanges(held.rates)} release turns ${directionChanges(released)} overshoot ${overshoot.toFixed(3)} end ${released[released.length - 1].toFixed(3)} peak ${peak.toFixed(3)}`,
+  );
+}
+{
+  const sim = fresh();
+  drive(sim, { throttle: true, brake: false, steer: 0, drift: 0, boost: false }, 2);
+  const near = sim.rivals.filter((r) => !r.wrecked && Math.abs(r.along - sim.player.along) < 26);
+  check('two rivals stay nearby', near.length >= 2, `near ${near.length}`);
+}
+{
+  const sim = fresh();
+  const steps = 20 * 60;
+  let close = 0;
+  for (let i = 0; i < steps; i++) {
+    sim.player.boost = 100;
+    sim.update(1 / 60, { mode: 'play', throttle: true, brake: false, steer: 0, drift: 0, boost: true }, hooks);
+    const near = sim.rivals.filter((r) => !r.wrecked && Math.abs(r.along - sim.player.along) < 30);
+    if (near.length >= 2) close++;
+  }
+  const frac = close / steps;
+  check('full boost for 20s keeps two rivals inside 30 m', frac >= 0.8, `${(frac * 100).toFixed(1)}% of frames`);
+}
+
 if (failed) {
   console.error(`${failed} drive check(s) failed`);
   process.exit(1);
