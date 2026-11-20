@@ -24,6 +24,7 @@ const game = {
   chainT: 0,
 };
 
+const appEl = document.getElementById('app');
 const canvas = document.getElementById('view');
 const renderer = new THREE.WebGLRenderer({
   canvas,
@@ -74,12 +75,16 @@ const lookSmooth = new THREE.Vector3();
 const desired = new THREE.Vector3();
 
 function inputState() {
-  const steer = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  // Increasing yaw turns toward screen-left in the chase cam (measured against
+  // the camera's right axis). A and Q are the positive, leftward side.
+  const steer = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
+  const drift = (keys.has('KeyQ') ? 1 : 0) - (keys.has('KeyE') ? 1 : 0);
   return {
     mode: game.mode,
     throttle: keys.has('KeyW'),
     brake: keys.has('KeyS'),
     steer,
+    drift,
     boost: keys.has('Space'),
   };
 }
@@ -247,14 +252,35 @@ const hooks = {
 
 const sim = createSimulation(scene, track);
 
+let viewW = 1280;
+let viewH = 720;
+
 function resize() {
-  const w = window.innerWidth;
-  const h = Math.max(1, window.innerHeight);
+  // Size from the game element, not the browser window, so an iframe or a
+  // fullscreen box both fill exactly and the drawing buffer stays 1:1 with CSS.
+  const w = Math.max(1, Math.floor(appEl.clientWidth));
+  const h = Math.max(1, Math.floor(appEl.clientHeight));
+  viewW = w;
+  viewH = h;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  const pr = Math.min(window.devicePixelRatio || 1, 1.5);
+  const pr = Math.min(window.devicePixelRatio || 1, 2);
   renderer.setPixelRatio(pr);
   renderer.setSize(w, h, false);
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+}
+
+function toggleFullscreen() {
+  const going = !document.fullscreenElement;
+  const pending = going ? appEl.requestFullscreen?.() : document.exitFullscreen?.();
+  if (pending && typeof pending.catch === 'function') pending.catch(() => {});
+}
+
+function syncFullscreenButton() {
+  const button = document.getElementById('full-btn');
+  if (!button) return;
+  button.textContent = document.fullscreenElement ? 'Exit fullscreen' : 'Fullscreen';
 }
 
 function updateCamera(dt) {
@@ -266,8 +292,10 @@ function updateCamera(dt) {
   const rz = -Math.sin(yaw);
   // Close rear-three-quarter. The follow rate stays high so speed doesn't
   // leave the car sitting on the horizon.
-  const back = 5.6;
-  const up = 2.15;
+  // A short iframe (about 720×405) pulls the camera in so the car stays large.
+  const zoom = Math.min(viewH, viewW) < 520 ? 0.84 : 1;
+  const back = 5.6 * zoom;
+  const up = 2.15 * zoom;
   const shoulder = -2.15;
   const steerOff = (player.steerVisual || 0) * 0.55;
   desired.set(
@@ -356,7 +384,10 @@ function frame(now) {
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space' || e.code === 'Escape') e.preventDefault();
   keys.add(e.code);
-  if (e.code === 'Escape') {
+  if (e.code === 'KeyF') {
+    e.preventDefault();
+    if (!e.repeat) toggleFullscreen();
+  } else if (e.code === 'Escape') {
     if (game.mode === 'play') pauseGame();
     else if (game.mode === 'pause') resumeGame();
     else if (game.mode === 'over') showMenu();
@@ -378,6 +409,11 @@ document.addEventListener('visibilitychange', () => {
 });
 
 document.getElementById('start-btn').addEventListener('click', startGame);
+document.getElementById('full-btn').addEventListener('click', toggleFullscreen);
+document.addEventListener('fullscreenchange', () => {
+  syncFullscreenButton();
+  resize();
+});
 document.getElementById('resume-btn').addEventListener('click', resumeGame);
 document.getElementById('quit-btn').addEventListener('click', () => {
   audio.ui();
@@ -390,6 +426,9 @@ document.getElementById('menu-btn').addEventListener('click', () => {
 });
 
 window.addEventListener('resize', resize);
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resize()).observe(appEl);
+}
 resize();
 
 window.__rage = {

@@ -22,8 +22,14 @@ The page is an ES module, so it needs a local server. Opening `index.html` as a 
 
 | Key | Action |
 | --- | --- |
-| W A S D | Drive |
+| W | Throttle |
+| S | Brake / reverse |
+| A | Steer left |
+| D | Steer right |
+| Q | Drift left. The rear steps out, grip drops, and the boost meter fills. |
+| E | Drift right. Same as Q, the other way. |
 | Space | Boost, while the meter has charge |
+| F | Fullscreen |
 | Esc | Pause. Resume or Quit. Quit returns to the start menu. |
 
 Enter also starts a run from the menu or the results screen.
@@ -37,6 +43,7 @@ Enter also starts a run from the menu or the results screen.
 - Two-way traffic. A head-on with traffic totals the car. A sideswipe or a rear-end launches that car and fills the boost meter.
 - Rival hits and wall hits damage the hull. The damage bar fills as the car comes apart. Empty hull is game over.
 - Rival contact is heavy: you scrub speed and take damage, but those cars stay on the road. Traffic bumps are the wild ones. They pop, spin, and leave the lane.
+- Holding a drift slides the car at an angle, scrubs a little speed, lays skid marks, and fills the boost meter. Let go and the tires grab again.
 
 ## Limits
 

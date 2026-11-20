@@ -204,6 +204,8 @@ function makeCar(kind, mesh) {
     bob: 0,
     tumble: 0,
     steerVisual: 0,
+    drift: 0,
+    driftGrip: 1,
     cruise: 30,
     lane: 0,
     dir: 1,
@@ -284,6 +286,83 @@ export function createSimulation(scene, track) {
     shards.push(m);
   }
 
+  const skidGeo = new THREE.PlaneGeometry(0.34, 0.9);
+  const skids = [];
+  for (let i = 0; i < 70; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0x171910,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const m = new THREE.Mesh(skidGeo, mat);
+    m.rotation.order = 'YXZ';
+    m.rotation.x = -Math.PI / 2;
+    m.visible = false;
+    m.renderOrder = 2;
+    m.userData.life = 0;
+    scene.add(m);
+    skids.push(m);
+  }
+  let skidCursor = 0;
+  let skidAcc = 0;
+
+  const smokeCanvas = document.createElement('canvas');
+  smokeCanvas.width = 32;
+  smokeCanvas.height = 32;
+  {
+    const g = smokeCanvas.getContext('2d');
+    const grd = g.createRadialGradient(16, 16, 1, 16, 16, 16);
+    grd.addColorStop(0, 'rgba(226, 222, 196, 0.65)');
+    grd.addColorStop(1, 'rgba(226, 222, 196, 0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 32, 32);
+  }
+  const smokeTex = new THREE.CanvasTexture(smokeCanvas);
+  smokeTex.colorSpace = THREE.SRGBColorSpace;
+  const smokeGeo = new THREE.PlaneGeometry(1, 1);
+  const smokes = [];
+  for (let i = 0; i < 28; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      map: smokeTex,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+    });
+    const m = new THREE.Mesh(smokeGeo, mat);
+    m.visible = false;
+    m.renderOrder = 3;
+    m.userData.life = 0;
+    scene.add(m);
+    smokes.push(m);
+  }
+  let smokeCursor = 0;
+
+  function dropSkid(x, y, z, yaw) {
+    const m = skids[skidCursor % skids.length];
+    skidCursor += 1;
+    m.visible = true;
+    m.position.set(x, y, z);
+    m.rotation.y = yaw;
+    m.userData.life = 1.6;
+    m.userData.max = 1.6;
+    m.material.opacity = 0.55;
+  }
+
+  function puff(x, y, z) {
+    const m = smokes[smokeCursor % smokes.length];
+    smokeCursor += 1;
+    m.visible = true;
+    m.position.set(x, y, z);
+    m.scale.setScalar(0.45 + Math.random() * 0.25);
+    m.userData.life = 0.55;
+    m.userData.max = 0.55;
+    m.userData.vx = (Math.random() - 0.5) * 1.4;
+    m.userData.vy = 1.6 + Math.random() * 1.2;
+    m.userData.vz = (Math.random() - 0.5) * 1.4;
+    m.material.opacity = 0.55;
+  }
+
   function burst(x, y, z, n) {
     let spawned = 0;
     for (const m of shards) {
@@ -346,6 +425,8 @@ export function createSimulation(scene, track) {
     player.health = PLAYER_HEALTH;
     player.boost = PLAYER_START_BOOST;
     player.boosting = false;
+    player.drift = 0;
+    player.driftGrip = 1;
     player.stun = 0;
     player.invuln = 0;
     player.lastHit = -10;
@@ -441,13 +522,24 @@ export function createSimulation(scene, track) {
   function drivePlayer(car, dt, input) {
     if (car.stun > 0) car.stun -= dt;
     const steer = clamp(input.steer || 0, -1, 1);
+    const driftIn = clamp(input.drift || 0, -1, 1);
     const throttle = input.throttle ? 1 : 0;
     const brake = input.brake ? 1 : 0;
     const reverse = car.speed < -1 ? -1 : 1;
     const sp = Math.abs(car.speed);
+    // Drift only while moving forward. Positive drift yaws toward screen-left (Q).
+    const drifting = driftIn !== 0 && car.speed > 10 && !brake;
     let authority = 1.8 * Math.min(1, 0.4 + sp / 14) / (1 + sp / 110);
     if (car.stun > 0) authority *= 0.62;
     applyYaw(car, steer * reverse * authority * dt);
+    if (drifting) {
+      // Kick the nose into the slide. The old forward speed becomes sideways
+      // slip, so the rear steps out and the car travels at an angle.
+      applyYaw(car, driftIn * 1.35 * dt);
+      car.slip += -driftIn * 18 * dt;
+      car.speed -= 6 * Math.abs(driftIn) * dt;
+      car.boost = Math.min(100, car.boost + 24 * Math.abs(driftIn) * dt);
+    }
 
     const boosting = !!(input.boost && !brake && car.boost > 0.5 && (throttle || car.speed > 8));
     car.boosting = boosting;
@@ -459,17 +551,23 @@ export function createSimulation(scene, track) {
     const max = boosting ? 70 : 46;
     if (car.speed > max) car.speed = max;
     if (car.speed < -16) car.speed = -16;
-    const grip = (boosting ? 1.35 : 4.8) * (car.stun > 0 ? 0.4 : 1);
+    // Grip eases back in after a drift instead of snapping.
+    const gripTarget = drifting ? 0.16 : 1;
+    const gripBlend = 1 - Math.exp(-(drifting ? 9 : 3.4) * dt);
+    car.driftGrip += (gripTarget - car.driftGrip) * gripBlend;
+    const grip = (boosting ? 1.35 : 4.8) * (car.stun > 0 ? 0.4 : 1) * car.driftGrip;
     car.slip *= Math.exp(-grip * dt);
     car.slip = clamp(car.slip, -36, 36);
     if (boosting) car.boost = Math.max(0, car.boost - 28 * dt);
     if (car.boost <= 0) car.boosting = false;
     car.steerVisual = steer;
+    car.drift = drifting ? driftIn : 0;
   }
 
   function coast(car, dt) {
     car.boosting = false;
     car.steerVisual = 0;
+    car.drift = 0;
     car.speed -= car.speed * 0.45 * dt;
     car.slip *= Math.exp(-4 * dt);
     if (car.stun > 0) car.stun -= dt;
@@ -764,7 +862,7 @@ export function createSimulation(scene, track) {
       g.rotation.z = Math.sin(car.tumble * 0.8) * 0.7;
     } else {
       const pitch = -car.slope - clamp(car.speed * 0.0016, -0.05, 0.05) - (car.boosting ? 0.035 : 0);
-      const roll = clamp(-car.slip * 0.014, -0.2, 0.2);
+      const roll = clamp(-car.slip * 0.02 - (car.drift || 0) * 0.12, -0.32, 0.32);
       g.rotation.x = pitch;
       g.rotation.z = roll;
     }
@@ -813,6 +911,53 @@ export function createSimulation(scene, track) {
     const braking = input.mode === 'play' && !!input.brake;
     for (const car of cars) updateMesh(car, dt, braking && car === player);
     boostLight.intensity = player.boosting ? 5 : 0;
+
+    if (player.drift && !player.wrecked) {
+      skidAcc += dt;
+      const fx = Math.sin(player.yaw);
+      const fz = Math.cos(player.yaw);
+      const rx = Math.cos(player.yaw);
+      const rz = -Math.sin(player.yaw);
+      if (skidAcc > 0.045) {
+        skidAcc = 0;
+        for (const side of [-1, 1]) {
+          dropSkid(
+            player.x - fx * 1.35 + rx * side * 0.92,
+            player.y + 0.07,
+            player.z - fz * 1.35 + rz * side * 0.92,
+            player.yaw,
+          );
+        }
+      }
+      if (Math.random() < dt * 28) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        puff(
+          player.x - fx * 1.45 + rx * side * 0.7,
+          player.y + 0.35,
+          player.z - fz * 1.45 + rz * side * 0.7,
+        );
+      }
+    } else {
+      skidAcc = 0;
+    }
+
+    for (const m of skids) {
+      if (m.userData.life <= 0) continue;
+      m.userData.life -= dt;
+      m.material.opacity = 0.5 * Math.max(0, m.userData.life / m.userData.max);
+      if (m.userData.life <= 0) m.visible = false;
+    }
+    for (const m of smokes) {
+      if (m.userData.life <= 0) continue;
+      m.userData.life -= dt;
+      m.position.x += m.userData.vx * dt;
+      m.position.y += m.userData.vy * dt;
+      m.position.z += m.userData.vz * dt;
+      m.scale.multiplyScalar(1 + dt * 1.4);
+      m.material.opacity = 0.5 * Math.max(0, m.userData.life / m.userData.max);
+      m.rotation.y = player.yaw;
+      if (m.userData.life <= 0) m.visible = false;
+    }
 
     for (const m of shards) {
       if (m.userData.life <= 0) continue;
