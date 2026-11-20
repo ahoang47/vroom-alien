@@ -9,3 +9,8 @@ Status: thought experiment / early pitch (Nov 2026). Nothing here is locked.
 - [Open world (OSM)](design/open-world-osm.md): building the city from OpenStreetMap
 
 Related: planned as a sequel hook from an alien substory in Midnight Apex.
+
+
+## Playable prototype: Martian Motor Mayhem (Road Rage)
+
+A lightweight three.js Road Rage prototype, with every asset generated in code, lives in [`road-rage/`](road-rage/). Run it with `cd road-rage && python3 -m http.server 8647`, then open http://127.0.0.1:8647. Controls are WASD to drive, Space to boost and Esc to pause.
