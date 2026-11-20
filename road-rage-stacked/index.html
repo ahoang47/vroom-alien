@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Martian Motor Mayhem</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23161a10'/%3E%3Crect x='2' y='7' width='12' height='5' fill='%23d7c09a'/%3E%3Crect x='4' y='4' width='7' height='4' fill='%23e23b32'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <canvas id="view" width="384" height="216"></canvas>
+    <div id="grade"></div>
+    <div id="hurt"></div>
+    <div id="flash"></div>
+
+    <div id="hud" class="hidden">
+      <div class="topbar">
+        <div class="stat">
+          <span class="label">Time</span>
+          <strong id="timer">1:00</strong>
+          <em id="plus" class="plus"></em>
+        </div>
+        <div class="stat center">
+          <span class="label">Road Rage</span>
+          <strong id="takedowns">0 / 8</strong>
+          <em id="bonus-flag" class="flag hidden">Bonus</em>
+        </div>
+        <div class="stat right">
+          <span class="label">Score</span>
+          <strong id="score">0</strong>
+        </div>
+      </div>
+      <p id="callout"></p>
+      <div class="bottombar">
+        <div class="map-wrap">
+          <canvas id="minimap" width="64" height="220" aria-label="Progress along the freeway"></canvas>
+        </div>
+        <div class="speedbox">
+          <strong id="speed">0</strong>
+          <span>km/h</span>
+        </div>
+        <div class="bars">
+          <label for="boost-fill">Boost <i id="boost-num">0</i></label>
+          <div class="track" id="boost-track"><div id="boost-fill"></div></div>
+          <label class="damage-label" for="damage-fill">Damage <i id="damage-num">0%</i></label>
+          <div class="track damage" id="damage-track"><div id="damage-fill"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="menu" class="overlay">
+      <div class="panel">
+        <p class="kicker">Sprite-stacked arcade</p>
+        <h1>Martian Motor Mayhem</h1>
+        <p class="event">Road Rage</p>
+        <p class="deck">
+          Shunt rival racers into the barriers and the oncoming traffic.
+          Reach 8 takedowns before the clock runs out or the car is totaled.
+          Each takedown adds 10 seconds until that target is met. After it,
+          the clock stays honest and extra wrecks pay bonus score.
+        </p>
+        <div class="keys">
+          <kbd>W</kbd><span>Throttle</span>
+          <kbd>S</kbd><span>Brake</span>
+          <kbd>A</kbd><span>Steer left</span>
+          <kbd>D</kbd><span>Steer right</span>
+          <kbd>Q</kbd><span>Drift left</span>
+          <kbd>E</kbd><span>Drift right</span>
+          <kbd>Space</kbd><span>Boost</span>
+          <kbd>F</kbd><span>Fullscreen</span>
+          <kbd>Esc</kbd><span>Pause</span>
+        </div>
+        <div class="row">
+          <button id="start-btn" type="button">Hit the road</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pause" class="overlay center hidden">
+      <div class="panel">
+        <p class="kicker">Martian Motor Mayhem</p>
+        <h1>Paused</h1>
+        <p class="event">Road Rage</p>
+        <p class="deck">The freeway is holding its breath. Resume the run, or quit back to the start.</p>
+        <div class="row">
+          <button id="resume-btn" type="button">Resume</button>
+          <button id="quit-btn" type="button" class="ghost">Quit</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="results" class="overlay center hidden">
+      <div class="panel">
+        <p class="kicker">Road Rage</p>
+        <h1 id="res-title">Time up</h1>
+        <p class="deck" id="res-deck"></p>
+        <div class="keys" id="res-stats"></div>
+        <div class="row">
+          <button id="retry-btn" type="button">Run it back</button>
+          <button id="menu-btn" type="button" class="ghost">Menu</button>
+        </div>
+      </div>
+    </div>
+
+    <p id="debug" class="hidden"></p>
+    <p id="boot-error" hidden></p>
+  </div>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
