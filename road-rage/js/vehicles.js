@@ -422,6 +422,8 @@ export function createSimulation(scene, track) {
 
   function reset() {
     simTime = 0;
+    noOneAhead = 0;
+    aheadCooldown = 0;
     const start = track.length * 0.12;
     spawn(player, start, 3.1, 1, 30);
     player.health = PLAYER_HEALTH;
@@ -479,11 +481,13 @@ export function createSimulation(scene, track) {
     return clamp(lat, -ROAD_HALF + 2.2, ROAD_HALF - 2.2);
   }
 
-  function rivalRank(car) {
-    const live = rivals.filter((r) => !r.wrecked);
-    live.sort((a, b) => Math.abs(alongDelta(track, a.along, player.along)) - Math.abs(alongDelta(track, b.along, player.along)));
-    const idx = live.indexOf(car);
-    return idx < 0 ? 4 : idx;
+  // Seconds with nobody driving ahead of the camera.
+  let noOneAhead = 0;
+  let aheadCooldown = 0;
+
+  function rivalGap(car) {
+    // Positive when this rival is behind the player.
+    return alongDelta(track, car.along, player.along);
   }
 
   function updateRival(car, dt) {
@@ -491,88 +495,76 @@ export function createSimulation(scene, track) {
     if (car.invuln > 0) car.invuln -= dt;
     if (car.stun > 0) car.stun -= dt;
     const q = queryTrack(track, car.x, car.z);
-    // Positive delta: the player is ahead of this rival.
-    const delta = alongDelta(track, q.along, player.along);
-    const fighting = rivalRank(car) < 2;
-    // Lost cars come back from behind, not from a warp in front of the camera.
-    const lost = fighting ? delta > 40 || delta < -36 : delta > 70 || delta < -28;
-    if (car.invuln <= 0 && lost) {
-      const back = fighting ? 30 + car.slot * 4 : 42 + car.slot * 6;
-      spawn(car, player.along - back, car.preferLat, 1, Math.max(32, player.speed * 0.9));
-      car.health = car.maxHealth;
-      car.invuln = 0.75;
-      car.stun = 0;
-      car.boost = Math.max(car.boost, 70);
-      return;
-    }
-    let desiredLat = car.preferLat;
-    let target = car.cruise;
-    let wantBoost = false;
-    if (!fighting) {
-      // The rest of the field trails, so only one or two cars are in your face.
-      const slot = 30 + car.slot * 7;
-      if (delta > slot + 8) {
-        target = player.speed + 8;
-        wantBoost = delta > slot + 18;
-      } else if (delta < slot - 10) {
-        target = Math.max(26, player.speed - 8);
-      } else {
-        target = Math.max(28, player.speed - 2);
-      }
-    } else if (delta > 10) {
-      const urgency = clamp((delta - 10) / 22, 0, 1);
-      target = Math.max(car.cruise, player.speed + 8 + urgency * 16);
-      wantBoost = true;
-    } else if (delta < -14) {
-      // Ahead of the player: ease off, don't disappear.
-      target = Math.max(30, player.speed - 6);
+    const delta = rivalGap(car);
+    // Behind: target speed climbs with the gap, past the player's boost top
+    // speed, so a 40 m deficit closes in about two seconds. Ahead: only a
+    // small ease-off, so boosting does not leave them behind.
+    let target;
+    if (delta > 0) {
+      const extra = clamp(6 + delta * 0.62, 6, 55);
+      target = player.speed + extra;
     } else {
-      // Alongside: keep pace a little under the player so they can line up a hit.
-      target = Math.max(32, player.speed - 4);
+      const lead = -delta;
+      target = Math.max(24, player.speed - clamp(3 + lead * 0.06, 3, 12));
     }
-    if (wantBoost && car.boost > 4) {
-      car.boost = Math.max(0, car.boost - 20 * dt);
-      car.boosting = true;
-      target = Math.min(74, target + 8);
-    } else {
-      car.boost = Math.min(100, car.boost + 16 * dt);
-      car.boosting = false;
-      target = Math.min(fighting ? 52 : 46, target);
-    }
-    if (fighting && Math.abs(delta) < 24 && car.invuln <= 0) {
-      const side = car.slot % 2 === 0 ? 1 : -1;
-      const weave = Math.sin(simTime * 0.8 + car.seed) * 0.8;
-      desiredLat = player.lateral + side * 3.2 + weave;
-    }
+    target = clamp(target, 24, 120);
+    car.boosting = delta > 8 && car.speed > 20;
+    if (car.boosting) car.boost = Math.max(0, car.boost - 12 * dt);
+    else car.boost = Math.min(100, car.boost + 20 * dt);
+
+    // Attack the player's lane. The offset shrinks as they close in, so they
+    // slide onto the player's side instead of holding a fixed racing line.
+    const flank = car.slot % 2 === 0 ? 1 : -1;
+    const tightness = clamp(Math.abs(delta) / 22, 0.25, 1);
+    const weave = Math.sin(simTime * 1.35 + car.seed) * 1.1;
+    let desiredLat = player.lateral + flank * (1.15 + tightness * 2.1) + weave;
     desiredLat = dodge(car, q, desiredLat);
-    const look = sampleAt(track, q.along + (fighting ? 14 : 18));
-    steerToward(car, look.x + look.rx * desiredLat, look.z + look.rz * desiredLat, dt, car.stun > 0 ? 0.45 : 1.7);
-    const accel = car.boosting ? 40 : 26;
-    car.speed += clamp(target - car.speed, -28, accel) * dt;
-    const grip = car.stun > 0 ? 0.5 : 5.4;
+    const look = sampleAt(track, q.along + 12);
+    steerToward(car, look.x + look.rx * desiredLat, look.z + look.rz * desiredLat, dt, car.stun > 0 ? 0.6 : 2.4);
+    const accel = 55 + clamp(delta, 0, 40);
+    car.speed += clamp(target - car.speed, -36, accel) * dt;
+    if (car.speed > 120) car.speed = 120;
+    const grip = car.stun > 0 ? 0.7 : 6.2;
     car.slip *= Math.exp(-grip * dt);
   }
 
-  // If the fight pair vanishes, pull replacements in from behind.
-  function keepRivalPack() {
-    const live = rivals.filter((r) => !r.wrecked && r.invuln <= 0);
-    const nearby = live.filter((r) => {
-      const d = alongDelta(track, r.along, player.along);
-      return d > -28 && d < 32;
-    });
-    if (nearby.length >= 2) return;
-    const far = live
-      .filter((r) => !nearby.includes(r))
-      .sort((a, b) => Math.abs(alongDelta(track, b.along, player.along)) - Math.abs(alongDelta(track, a.along, player.along)));
-    let need = 2 - nearby.length;
-    for (const car of far) {
-      if (need <= 0) break;
-      spawn(car, player.along - 32 - need * 9, car.preferLat, 1, Math.max(30, player.speed * 0.86));
-      car.health = Math.max(car.health, 60);
-      car.invuln = 0.8;
-      car.stun = 0;
-      car.boost = Math.max(car.boost, 65);
-      need -= 1;
+  function placeRivalAhead(car, lead, lateral) {
+    const speed = clamp(player.speed - 14, 26, 58);
+    spawn(car, player.along + lead, lateral, 1, speed);
+    car.invuln = 0.4;
+    car.stun = 0;
+    car.boost = 50;
+    car.boosting = false;
+    car.health = Math.max(car.health, 70);
+  }
+
+  // Drop rivals into the fog ahead when the player has cleared the field.
+  // The field stays five cars; only the ones already out of the fight move.
+  function manageRivalField(dt) {
+    if (player.wrecked) return;
+    const live = rivals.filter((r) => !r.wrecked);
+    if (!live.length) return;
+    const gaps = live.map((r) => ({ r, d: rivalGap(r) }));
+    const ahead = gaps.filter((g) => g.d < -8 && g.d > -220);
+    const allFarBehind = gaps.every((g) => g.d > 60);
+    if (ahead.length === 0) noOneAhead += dt;
+    else noOneAhead = 0;
+    if (aheadCooldown > 0) aheadCooldown -= dt;
+
+    if ((allFarBehind || noOneAhead >= 3) && aheadCooldown <= 0) {
+      const donors = gaps.slice().sort((a, b) => b.d - a.d);
+      let placed = 0;
+      for (const item of donors) {
+        if (placed >= 2) break;
+        if (item.d < 18) continue;
+        const lateral = Math.max(-8.2, Math.min(8.2, player.lateral + (placed === 0 ? 2.5 : -2.5)));
+        placeRivalAhead(item.r, 168 + placed * 34, lateral);
+        placed += 1;
+      }
+      if (placed > 0) {
+        noOneAhead = 0;
+        aheadCooldown = 5;
+      }
     }
   }
 
@@ -972,7 +964,6 @@ export function createSimulation(scene, track) {
 
       for (const car of rivals) updateRival(car, h);
       for (const car of traffic) updateTraffic(car, h);
-      if (s === steps - 1 && input.mode === 'play') keepRivalPack();
       for (const car of cars) integrate(car, h);
       collideAll(hooks);
       for (const car of cars) groundAndBarrier(car, hooks);
@@ -984,6 +975,7 @@ export function createSimulation(scene, track) {
         else respawnTraffic(car);
       }
     }
+    if (input.mode === 'play') manageRivalField(dt);
 
     const braking = input.mode === 'play' && !!input.brake;
     for (const car of cars) updateMesh(car, dt, braking && car === player);
@@ -1068,5 +1060,9 @@ export function createSimulation(scene, track) {
     update,
     wreckPlayer,
     burst,
+    trackLength: track.length,
+    sampleAlong(distance) {
+      return sampleAt(track, distance);
+    },
   };
 }
