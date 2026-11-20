@@ -1,6 +1,6 @@
 # Martian Motor Mayhem — sprite stacked
 
-The Road Rage event from [`road-rage/`](../road-rage/), drawn with sprite stacking instead of three.js. The freeway is a straight-down Spy Hunter view: the road runs up the screen, the car sits in the lower third, and the world scrolls down as you drive. Curves, lane changes, merges, and overpasses come to you. There is no circuit map.
+The Road Rage event from [`road-rage/`](../road-rage/), drawn with sprite stacking instead of three.js. The camera stays north-up and a little ahead of the car. World distance is squashed, so the elevated freeway reads as a tilted top-down. The road is an endless ribbon with curves, lane changes, merges, and overpasses. The strip at the bottom left is progress along that road.
 
 Everything on screen is drawn in code. There is no build step and no image files to load. Paths are relative, so the folder can be copied under a subpath of a site.
 
@@ -16,7 +16,7 @@ Open http://localhost:8648
 
 The page is an ES module, so it needs a local server. The view is a 384×216 pixel buffer scaled with nearest-neighbor to fill the window or the iframe it sits in. Press F for fullscreen.
 
-Stacks use a squash of 0.9 and a short slice spacing, so a car still shows a little roof height without tilting the ground.
+Stacks use a squash of 0.75 and one pixel of slice spacing.
 
 ## Controls
 

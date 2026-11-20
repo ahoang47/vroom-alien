@@ -366,15 +366,25 @@ export function createSimulation(track) {
   }
 
   function spawnAhead(car, index) {
-    // Just past the top of the overhead view (~19 m of road is on screen).
-    const along = player.along + 23 + index * 5;
-    spawn(car, along, car.preferLat, 1, Math.max(24, player.speed - 5));
+    // Ahead on the road, just past the look-ahead camera. Nudge aside instead
+    // of leaping further down the road, so the pack stays inside fighting range.
+    const laterals = [-7.4, 7.4, -3.2, 3.4, 0];
+    const along = player.along + 22 + index * 4;
+    spawn(car, along, laterals[index % laterals.length], 1, Math.max(24, player.speed - 5));
     car.health = car.maxHealth;
     car.boost = 70;
     car.invuln = 0.6;
     car.stun = 0;
     car.boosting = false;
-    separateFromOthers(car);
+    const q = queryTrack(track, car.x, car.z);
+    for (const o of cars) {
+      if (o === car || o.wrecked) continue;
+      const dx = car.x - o.x;
+      const dz = car.z - o.z;
+      if (dx * dx + dz * dz > 18) continue;
+      car.x += q.rx * Math.sign(dx || 1) * 2.2;
+      car.z += q.rz * Math.sign(dx || 1) * 2.2;
+    }
   }
 
   function keepRivalsClose(dt) {

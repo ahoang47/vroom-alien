@@ -1,9 +1,9 @@
 // Scenery streams in along the endless freeway. Stacks that never change
 // facing are rasterized once and then blitted as plain sprites.
-import { PX, SQUASH, SPACING } from './display.js';
+import { PX, SQUASH, SPACING, HEIGHT_PX } from './display.js';
 import { sampleAt } from './track.js';
 import { clamp } from './util.js';
-import { rasterStack, quantizeTurn, screenTurn } from './stack.js';
+import { rasterStack, quantizeTurn, turnFromYaw } from './stack.js';
 import {
   buildGarage,
   makeBarrier,
@@ -54,7 +54,7 @@ export function createWorld(track) {
       roads.push({ a, b, layer: 0.12 });
       const len = Math.hypot(b.x - a.x, b.z - a.z);
       const yaw = Math.atan2(a.tx, a.tz);
-      const q = quantizeTurn(screenTurn(yaw));
+      const q = quantizeTurn(turnFromYaw(yaw));
       const lengthPx = clamp(Math.round(len * PX), 4, 80);
       const thickPx = Math.max(5, Math.round(0.85 * PX));
       const mx = (a.x + b.x) * 0.5;
@@ -69,17 +69,29 @@ export function createWorld(track) {
           SPACING,
         ));
         const lateral = side * (a.half + 0.35);
-        add(statics, mx + a.rx * lateral, 0, mz + a.rz * lateral, sprite, 0.22, Math.ceil(lengthPx * 0.6) + 8);
+        add(statics, mx + a.rx * lateral, (a.y + b.y) * 0.5, mz + a.rz * lateral, sprite, 0.22, Math.ceil(lengthPx * 0.6) + 8);
       }
     }
 
     const lampAt = sampleAt(track, s0 + CHUNK * 0.5);
     const lampYaw = Math.atan2(lampAt.tx, lampAt.tz);
     for (const side of [-1, 1]) {
-      const q = quantizeTurn(screenTurn(lampYaw + (side < 0 ? Math.PI : 0)));
+      const q = quantizeTurn(turnFromYaw(lampYaw + (side < 0 ? Math.PI : 0)));
       const sprite = cached(lampCache, q.bucket, () => rasterStack(garage.lamp, q.turn, SQUASH, SPACING));
       const lateral = side * (lampAt.half + 2.4);
-      add(statics, lampAt.x + lampAt.rx * lateral, 0, lampAt.z + lampAt.rz * lateral, sprite, 0.28, 20);
+      add(statics, lampAt.x + lampAt.rx * lateral, lampAt.y, lampAt.z + lampAt.rz * lateral, sprite, 0.28, 20);
+    }
+
+    const pierCount = clamp(Math.round(lampAt.y * HEIGHT_PX) + 1, 8, 72);
+    const pier = cached(columnCache, `pier:${pierCount}`, () => rasterStack(
+      makeColumn(7, pierCount, [132, 140, 112, 255], [186, 190, 156, 255]),
+      0,
+      SQUASH,
+      SPACING,
+    ));
+    for (const side of [-1, 1]) {
+      const lateral = side * (lampAt.half + 0.15);
+      add(statics, lampAt.x + lampAt.rx * lateral, 0, lampAt.z + lampAt.rz * lateral, pier, 0.04, 20);
     }
 
     for (const side of [-1, 1]) {
@@ -120,11 +132,12 @@ export function createWorld(track) {
       const u = ((s % period) + period) % period;
       if (Math.abs(u - mark) > 0.5) continue;
       const p = sampleAt(track, s);
-      const q = quantizeTurn(screenTurn(Math.atan2(p.rx, p.rz)));
+      const q = quantizeTurn(turnFromYaw(Math.atan2(p.rx, p.rz)));
       const deck = rasterStack(deckSheet, q.turn, SQUASH, SPACING);
-      add(statics, p.x, 3.6, p.z, deck, 0.5, 80);
-      const column = cached(columnCache, 'over', () => rasterStack(
-        makeColumn(8, 10, [150, 156, 126, 255], [190, 194, 160, 255]),
+      add(statics, p.x, p.y + 8, p.z, deck, 0.36, 80);
+      const rise = clamp(Math.round((p.y + 8) * HEIGHT_PX) + 1, 10, 80);
+      const column = cached(columnCache, `over:${rise}`, () => rasterStack(
+        makeColumn(8, rise, [150, 156, 126, 255], [190, 194, 160, 255]),
         0,
         SQUASH,
         SPACING,

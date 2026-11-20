@@ -42,24 +42,30 @@ export function roadHalf(distance) {
   return ROAD_HALF + widen;
 }
 
+function deckY(s) {
+  return 11 + Math.sin(s * 0.007) * 2.2;
+}
+
 function pose(s) {
   const ds = 0.8;
   const x0 = curveX(s - ds);
   const x1 = curveX(s + ds);
+  const y0 = deckY(s - ds);
+  const y1 = deckY(s + ds);
   let tx = x1 - x0;
   let tz = ds * 2;
-  const tl = Math.hypot(tx, tz) || 1;
-  tx /= tl;
-  tz /= tl;
+  const horiz = Math.hypot(tx, tz) || 1;
+  tx /= horiz;
+  tz /= horiz;
   return {
     x: curveX(s),
-    y: 0,
+    y: deckY(s),
     z: s,
     tx,
     tz,
     rx: tz,
     rz: -tx,
-    slope: 0,
+    slope: Math.atan2(y1 - y0, horiz),
     along: s,
     half: roadHalf(s),
     lateral: 0,

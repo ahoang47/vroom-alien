@@ -69,15 +69,10 @@ export function turnFromHeading(hx, hy) {
   return Math.atan2(hy, hx) - Math.PI / 2;
 }
 
-// World yaw: forward is (sin yaw, cos yaw). turnFromYaw treats world +Z as screen +Y.
+// World yaw: forward is (sin yaw, cos yaw). World +X is screen +X, world +Z is screen +Y.
 // Always pass the heading, never the velocity, so reversing does not spin the nose around.
 export function turnFromYaw(yaw) {
   return turnFromHeading(Math.sin(yaw), Math.cos(yaw));
-}
-
-// Overhead camera: world +Z is screen up, and a slice sheet faces screen down at turn 0.
-export function screenTurn(yaw) {
-  return turnFromYaw(yaw + Math.PI);
 }
 
 const TAU = Math.PI * 2;
