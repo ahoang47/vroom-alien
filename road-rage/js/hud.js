@@ -135,6 +135,7 @@ export function createHud(track) {
       const dmg = Math.round((1 - snap.health / snap.maxHealth) * 100);
       dmgFill.style.width = `${Math.max(0, Math.min(100, dmg))}%`;
       dmgNum.textContent = `${Math.max(0, dmg)}%`;
+      dmgTrack.classList.toggle('mid', dmg >= 35 && dmg < 70);
       dmgTrack.classList.toggle('crit', dmg >= 70);
       hurtEl.style.opacity = String(Math.max(0, (dmg - 40) / 70));
       if (plusTimer > 0) plusTimer -= dt;

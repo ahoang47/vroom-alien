@@ -39,6 +39,13 @@
         </div>
       </div>
       <p id="callout"></p>
+      <div class="hull">
+        <div class="hull-head">
+          <span>Damage</span>
+          <strong id="damage-num">0%</strong>
+        </div>
+        <div class="track damage" id="damage-track"><div id="damage-fill"></div></div>
+      </div>
       <div class="bottombar">
         <div class="map-wrap">
           <canvas id="minimap" width="220" height="220" aria-label="Track map"></canvas>
@@ -50,8 +57,6 @@
         <div class="bars">
           <label for="boost-fill">Boost <i id="boost-num">0</i></label>
           <div class="track" id="boost-track"><div id="boost-fill"></div></div>
-          <label for="damage-fill">Damage <i id="damage-num">0%</i></label>
-          <div class="track damage" id="damage-track"><div id="damage-fill"></div></div>
         </div>
       </div>
     </div>
